@@ -47,6 +47,7 @@ import { Cluster, ExecuteCommandLogging } from '../cluster';
 import type { ContainerDefinition, Protocol } from '../container-definition';
 import type { IDeploymentLifecycleHookTarget } from '../deployment-lifecycle-hook-target';
 import { CfnService } from '../ecs.generated';
+import type { GatewayConnectorOptions } from '../gateway';
 import type { LogDriver, LogDriverConfig } from '../log-drivers/log-driver';
 
 /**
@@ -551,6 +552,17 @@ export interface BaseServiceOptions {
   readonly serviceConnectConfiguration?: ServiceConnectProps;
 
   /**
+   * Receive traffic through the Amazon ECS gateways associated with the cluster.
+   *
+   * Associate a gateway with the cluster with `cluster.associateGateway()`. For a cluster created in
+   * this app, the service depends on the cluster's gateway associations, because a gateway
+   * connector can only be added once an association is active.
+   *
+   * @default - the service does not receive traffic through a gateway
+   */
+  readonly gatewayConnector?: GatewayConnectorOptions;
+
+  /**
    * Revision number for the task definition or `latest` to use the latest active task revision.
    *
    * @default - Uses the revision of the passed task definition deployed by CloudFormation
@@ -1004,6 +1016,7 @@ export abstract class BaseService extends Resource
       networkConfiguration: this._networkConfigurationBox,
       serviceRegistries: this._serviceRegistries,
       serviceConnectConfiguration: this._serviceConnectConfig,
+      gatewayConnectors: props.gatewayConnector ? [renderGatewayConnector(props.gatewayConnector)] : undefined,
       volumeConfigurations: this._volumes.derive(_ => this.renderVolumes()),
       ...additionalProps,
     });
@@ -1079,6 +1092,13 @@ export abstract class BaseService extends Resource
 
     if (props.serviceConnectConfiguration) {
       this.enableServiceConnect(props.serviceConnectConfiguration);
+    }
+
+    if (props.gatewayConnector) {
+      this.validateGatewayConnector(props.gatewayConnector);
+      if (Cluster.isCluster(props.cluster)) {
+        this.node.addDependency(props.cluster._gatewayAssociationsDependable);
+      }
     }
 
     if (props.volumeConfigurations) {
@@ -1493,6 +1513,23 @@ export abstract class BaseService extends Resource
    * @param port: The port number
    * @returns boolean whether the port is valid
    */
+  private validateGatewayConnector(connector: GatewayConnectorOptions) {
+    const port = connector.healthCheck?.port;
+    if (port !== undefined && !Token.isUnresolved(port) && !this.isValidPort(port)) {
+      throw new ValidationError(lit`GatewayHealthCheckPortValid`, `gatewayConnector health check port must be between 1 and 65535, got ${port}`, this);
+    }
+    const accessTypes = connector.accessTypes;
+    if (accessTypes !== undefined && (accessTypes.length === 0 || new Set(accessTypes).size !== accessTypes.length)) {
+      throw new ValidationError(lit`GatewayAccessTypesValid`, `gatewayConnector accessTypes must be a non-empty list without duplicates, got ${JSON.stringify(accessTypes)}`, this);
+    }
+    // containers can be added to the task definition after the service is created
+    this.node.addValidation({
+      validate: () => Token.isUnresolved(connector.portName) || this.taskDefinition.findPortMappingByName(connector.portName)
+        ? []
+        : [`gatewayConnector portName ${JSON.stringify(connector.portName)} does not match the name of a port mapping in the task definition`],
+    });
+  }
+
   private isValidPort(port?: number): boolean {
     return !!(port && Number.isInteger(port) && port >= BaseService.MIN_PORT && port <= BaseService.MAX_PORT);
   }
@@ -2261,4 +2298,24 @@ function determineContainerNameAndPort(scope: IConstruct, options: DetermineCont
   }
 
   return {};
+}
+
+function renderGatewayConnector(connector: GatewayConnectorOptions): CfnService.GatewayConnectorProperty {
+  const hc = connector.healthCheck;
+  return {
+    portName: connector.portName,
+    filters: connector.accessTypes ? { accessTypes: connector.accessTypes } : undefined,
+    healthCheck: hc ? {
+      healthCheckPath: hc.path,
+      healthCheckPort: hc.port,
+      healthCheckProtocol: hc.protocol,
+      healthCheckIntervalSeconds: hc.interval?.toSeconds(),
+      healthCheckTimeoutSeconds: hc.timeout?.toSeconds(),
+      healthyThresholdCount: hc.healthyThresholdCount,
+      unhealthyThresholdCount: hc.unhealthyThresholdCount,
+      matcher: hc.healthyHttpCodes !== undefined || hc.healthyGrpcCodes !== undefined
+        ? { httpCode: hc.healthyHttpCodes, grpcCode: hc.healthyGrpcCodes }
+        : undefined,
+    } : undefined,
+  };
 }

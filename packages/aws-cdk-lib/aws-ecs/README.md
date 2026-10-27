@@ -2238,6 +2238,56 @@ The `includeQueryParameters` option specifies whether to include query parameter
 When enabled, query parameters from HTTP requests are included in the logs. Consider security and privacy implications, as query parameters may contain sensitive information such as request IDs and tokens.
 By default, this parameter is `false`.
 
+## Amazon ECS Gateway
+
+An Amazon ECS gateway is an Application Load Balancer that Amazon ECS manages for you and shares
+between the services of the clusters the gateway is associated with. Services opt in with a
+gateway connector that names the port mapping the gateway sends traffic to.
+
+```ts
+declare const vpc: ec2.Vpc;
+declare const cluster: ecs.Cluster;
+declare const taskDefinition: ecs.TaskDefinition;
+
+const gateway = new ecs.Gateway(this, 'Gateway', {
+  vpc,
+  scheme: ecs.GatewayScheme.INTERNET_FACING,
+});
+cluster.associateGateway(gateway);
+
+taskDefinition.addContainer('web', {
+  image: ecs.ContainerImage.fromRegistry('public.ecr.aws/nginx/nginx:latest'),
+  portMappings: [{ containerPort: 80, name: 'web' }],
+});
+
+new ecs.FargateService(this, 'Service', {
+  cluster,
+  taskDefinition,
+  gatewayConnector: {
+    portName: 'web',
+    accessTypes: [ecs.GatewayAccessType.PUBLIC],
+    healthCheck: { path: '/' },
+  },
+});
+```
+
+A gateway is internal by default and is placed in the VPC's private subnets; an internet-facing
+gateway is placed in the public subnets. Use `vpcSubnets` to choose other subnets (at least two).
+
+By default, the gateway gets a new IAM role that Amazon ECS assumes to manage the load balancer,
+with the `AmazonECSInfrastructureRoleForGatewayHostSharedALB` managed policy. Pass
+`infrastructureRole` to use your own role.
+
+Gateways have deletion protection on by default, so deleting the stack fails while the gateway
+exists. Set `deletionProtection: false` for gateways that you want to delete with the stack.
+
+A gateway connector can only be added to a service once the cluster's gateway association is
+active. Services in a cluster created in the same app depend on the cluster's gateway
+associations automatically. For an imported cluster, associate the gateway before deploying the
+service.
+
+To use a gateway that already exists, import it with `ecs.Gateway.fromGatewayArn()`.
+
 ## ServiceManagedVolume
 
 Amazon ECS now supports the attachment of Amazon Elastic Block Store (EBS) volumes to ECS tasks,

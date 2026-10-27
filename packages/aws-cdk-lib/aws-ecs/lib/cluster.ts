@@ -1,5 +1,5 @@
 import type { IConstruct } from 'constructs';
-import { Construct } from 'constructs';
+import { Construct, DependencyGroup } from 'constructs';
 import { BottleRocketImage, EcsOptimizedAmi } from './amis';
 import { ClusterGrants } from './cluster-grants';
 import { InstanceDrainHook } from './drain-hook/instance-drain-hook';
@@ -12,7 +12,9 @@ import {
   CfnCluster,
   CfnCapacityProvider,
   CfnClusterCapacityProviderAssociations,
+  CfnGatewayClusterAssociations,
 } from './ecs.generated';
+import type { IGateway } from './gateway';
 import * as autoscaling from '../../aws-autoscaling';
 import * as cloudwatch from '../../aws-cloudwatch';
 import type { InstanceRequirementsConfig } from '../../aws-ec2';
@@ -265,6 +267,11 @@ export class Cluster extends Resource implements ICluster {
    * CfnCluster instance
    */
   private _cfnCluster: CfnCluster;
+
+  /**
+   * The gateway associations of this cluster, for services with a gateway connector to depend on.
+   */
+  private readonly _gatewayAssociations = new DependencyGroup();
 
   @memoizedGetter
   public get clusterArn(): string {
@@ -814,6 +821,33 @@ export class Cluster extends Resource implements ICluster {
     if (!this._capacityProviderNames.includes(provider)) {
       this._capacityProviderNames.push(provider);
     }
+  }
+
+  /**
+   * Associate an Amazon ECS gateway with this cluster.
+   *
+   * Services in this cluster with a `gatewayConnector` receive traffic through the gateways
+   * associated with the cluster. Services created in this app depend on the association, so they
+   * are only created once it is active.
+   *
+   * @param gateway the gateway to associate with this cluster.
+   */
+  @MethodMetadata()
+  public associateGateway(gateway: IGateway): void {
+    const association = new CfnGatewayClusterAssociations(this, `GatewayAssociation${Names.nodeUniqueId(gateway.node)}`, {
+      cluster: this.clusterName,
+      gateway: gateway.gatewayRef.gatewayArn,
+    });
+    this._gatewayAssociations.add(association);
+  }
+
+  /**
+   * The gateway associations of this cluster.
+   *
+   * @internal
+   */
+  public get _gatewayAssociationsDependable(): DependencyGroup {
+    return this._gatewayAssociations;
   }
 
   /**
