@@ -975,6 +975,9 @@ export abstract class BaseService extends Resource
     if (props.canaryConfiguration) {
       this.validateCanaryConfiguration(props.canaryConfiguration);
     }
+    if (props.gatewayConnector) {
+      this.validateGatewayConnector(props.gatewayConnector);
+    }
 
     // An empty array tells CloudFormation to remove the existing load balancer registrations, while an
     // absent property leaves the live service alone, so removing the last target group from a service
@@ -1094,11 +1097,8 @@ export abstract class BaseService extends Resource
       this.enableServiceConnect(props.serviceConnectConfiguration);
     }
 
-    if (props.gatewayConnector) {
-      this.validateGatewayConnector(props.gatewayConnector);
-      if (Cluster.isCluster(props.cluster)) {
-        this.node.addDependency(props.cluster._gatewayAssociationsDependable);
-      }
+    if (props.gatewayConnector && Cluster.isCluster(props.cluster)) {
+      this.node.addDependency(props.cluster._gatewayAssociationsDependable);
     }
 
     if (props.volumeConfigurations) {
@@ -1553,9 +1553,14 @@ export abstract class BaseService extends Resource
 
     // containers can be added to the task definition after the service is created
     this.node.addValidation({
-      validate: () => Token.isUnresolved(connector.portName) || this.taskDefinition.findPortMappingByName(connector.portName)
-        ? []
-        : [`gatewayConnector portName ${JSON.stringify(connector.portName)} does not match the name of a port mapping in the task definition`],
+      validate: () => {
+        // a token can't be compared, so only report a mismatch when every name is known
+        if (Token.isUnresolved(connector.portName) || this.taskDefinition._hasUnresolvedPortMappingName()
+          || this.taskDefinition.findPortMappingByName(connector.portName)) {
+          return [];
+        }
+        return [`gatewayConnector portName ${JSON.stringify(connector.portName)} does not match the name of a port mapping in the task definition`];
+      },
     });
   }
 
@@ -2348,8 +2353,9 @@ function renderGatewayConnector(connector: GatewayConnectorOptions): CfnService.
       healthCheckPath: hc.path,
       healthCheckPort: hc.port,
       healthCheckProtocol: hc.protocol,
-      healthCheckIntervalSeconds: hc.interval?.toSeconds({ integral: false }),
-      healthCheckTimeoutSeconds: hc.timeout?.toSeconds({ integral: false }),
+      // validated as whole seconds; a token amount must be in seconds, or toSeconds() throws
+      healthCheckIntervalSeconds: hc.interval?.toSeconds(),
+      healthCheckTimeoutSeconds: hc.timeout?.toSeconds(),
       healthyThresholdCount: hc.healthyThresholdCount,
       unhealthyThresholdCount: hc.unhealthyThresholdCount,
       matcher: hc.healthyHttpCodes !== undefined || hc.healthyGrpcCodes !== undefined

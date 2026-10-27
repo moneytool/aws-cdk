@@ -2275,6 +2275,35 @@ A gateway is internal by default and is placed in the VPC's private subnets; an 
 gateway is placed in the public subnets. Use `vpcSubnets` to choose other subnets, in at least two
 Availability Zones, and `ipAddressType` for a dual-stack load balancer.
 
+By default the gateway listens for HTTPS on port 443, with a certificate that Amazon ECS requests
+and manages; `port` and `protocol` change that. Amazon ECS creates a security group for each
+connected service that lets the gateway reach its tasks, so you don't add rules for that traffic.
+Use `securityGroup` to control who can reach the gateway itself.
+
+```ts
+declare const vpc: ec2.Vpc;
+declare const securityGroup: ec2.SecurityGroup;
+declare const logBucket: s3.Bucket;
+
+new ecs.Gateway(this, 'Gateway', {
+  vpc,
+  securityGroup,
+  httpDesync: ecs.GatewayHttpDesyncMitigationMode.STRICTEST,
+  maxAlbCount: 2,
+  accessLogs: { bucket: logBucket, prefix: 'gateway' },
+  tags: { team: 'web' },
+});
+```
+
+The access log bucket's policy must allow Elastic Load Balancing to write the logs. Test traffic
+rules for blue/green deployments aren't modeled yet; set them on the `CfnGateway` with an escape
+hatch.
+
+The gateway doesn't copy its tags to the resources Amazon ECS creates for it (`propagateTags`
+defaults to `GatewayPropagateTags.NONE`, unlike CloudFormation's `GATEWAY`). A gateway created by
+CloudFormation carries `aws:cloudformation:*` tags, and copying them makes the certificate request
+for the gateway fail, so the gateway never connects services.
+
 By default, the gateway gets a new IAM role that Amazon ECS assumes to manage the load balancer,
 with the `AmazonECSInfrastructureRoleForGatewayHostSharedALB` managed policy. Pass
 `infrastructureRole` to use your own role.
@@ -2286,8 +2315,8 @@ Requirements and limits:
 - The gateway must be in the same VPC as the services, and its subnets must cover every
   Availability Zone the services run in.
 - Amazon ECS evaluates up to 5 gateways per cluster.
-- The gateway's name, scheme, subnets and IP address type can't be changed: changing them replaces
-  the gateway.
+- The gateway's name, scheme, subnets, IP address type, port and protocol can't be changed:
+  changing them replaces the gateway.
 - Gateways have deletion protection on by default, so deleting the stack, or replacing the
   gateway, fails while the gateway exists. Set `deletionProtection: false` for gateways that you
   want to delete or replace with the stack.

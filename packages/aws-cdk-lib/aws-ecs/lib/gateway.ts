@@ -2,12 +2,15 @@ import type { Construct } from 'constructs';
 import type { IGatewayRef, GatewayReference } from './ecs.generated';
 import { CfnGateway } from './ecs.generated';
 import * as ec2 from '../../aws-ec2';
-import * as elbv2 from '../../aws-elasticloadbalancingv2';
+import type * as elbv2 from '../../aws-elasticloadbalancingv2';
 import * as iam from '../../aws-iam';
+import type * as s3 from '../../aws-s3';
+import type * as wafv2 from '../../aws-wafv2';
 import type { Duration, IResource } from '../../core';
-import { Annotations, Arn, ArnFormat, Fn, Names, Resource, Token, ValidationError } from '../../core';
+import { Annotations, Arn, ArnFormat, Fn, Names, PhysicalName, Resource, Token, ValidationError } from '../../core';
 import { addConstructMetadata } from '../../core/lib/metadata-resource';
 import { lit } from '../../core/lib/private/literal-string';
+import { isGeneratedWhenNeededMarker } from '../../core/lib/private/physical-name-generator';
 import { propertyInjectable } from '../../core/lib/prop-injectable';
 
 /**
@@ -23,6 +26,79 @@ export enum GatewayScheme {
    * The load balancer has only private IP addresses and routes requests from inside the VPC.
    */
   INTERNAL = 'internal',
+}
+
+/**
+ * The protocol of the listener of an Amazon ECS gateway.
+ */
+export enum GatewayProtocol {
+  /**
+   * HTTP
+   */
+  HTTP = 'HTTP',
+
+  /**
+   * HTTPS, with a certificate that Amazon ECS requests and manages.
+   */
+  HTTPS = 'HTTPS',
+}
+
+/**
+ * How the load balancer of an Amazon ECS gateway handles requests that might pose an HTTP desync
+ * security risk.
+ */
+export enum GatewayHttpDesyncMitigationMode {
+  /**
+   * Allow all requests, and only record the ones that might pose a risk.
+   */
+  MONITOR = 'monitor',
+
+  /**
+   * Block requests that pose a high risk, and allow the others.
+   */
+  DEFENSIVE = 'defensive',
+
+  /**
+   * Allow only requests that comply with RFC 7230.
+   */
+  STRICTEST = 'strictest',
+}
+
+/**
+ * Whether Amazon ECS copies the tags of a gateway to the resources it creates for the gateway.
+ */
+export enum GatewayPropagateTags {
+  /**
+   * Copy the gateway's tags.
+   *
+   * For a gateway created by CloudFormation, this includes the `aws:cloudformation:*` tags, which
+   * makes the certificate request for the gateway fail.
+   */
+  GATEWAY = 'GATEWAY',
+
+  /**
+   * Don't copy the gateway's tags.
+   */
+  NONE = 'NONE',
+}
+
+/**
+ * Where the load balancer of an Amazon ECS gateway stores its access logs.
+ */
+export interface GatewayAccessLogs {
+  /**
+   * The S3 bucket for the access logs.
+   *
+   * The bucket policy must allow Elastic Load Balancing to write the logs.
+   */
+  readonly bucket: s3.IBucketRef;
+
+  /**
+   * The key prefix for the access logs.
+   *
+   * @default - no prefix
+   */
+  readonly prefix?: string;
 }
 
 /**
@@ -91,6 +167,8 @@ export interface GatewayConnectorHealthCheck {
   /**
    * The time between health checks of a task. Between 5 and 300 seconds.
    *
+   * A duration whose amount is a token must be created with `Duration.seconds()`.
+   *
    * @default Duration.seconds(30)
    */
   readonly interval?: Duration;
@@ -98,6 +176,8 @@ export interface GatewayConnectorHealthCheck {
   /**
    * The time after which a health check without a response fails. Between 2 and 120 seconds,
    * and less than `interval`.
+   *
+   * A duration whose amount is a token must be created with `Duration.seconds()`.
    *
    * @default Duration.seconds(5)
    */
@@ -228,17 +308,95 @@ export interface GatewayProps {
   /**
    * The IP address type of the gateway's load balancer.
    *
-   * Only `IpAddressType.IPV4` and `IpAddressType.DUAL_STACK` are supported.
    * Changing the IP address type replaces the gateway.
    *
-   * @default - IPv4 (the Amazon ECS default)
+   * @default - IpAddressType.IPV4 (the Amazon ECS default)
    */
   readonly ipAddressType?: elbv2.IpAddressType;
+
+  /**
+   * The port of the gateway's listener. Between 1 and 65535.
+   *
+   * Changing the port replaces the gateway.
+   *
+   * @default 443
+   */
+  readonly port?: number;
+
+  /**
+   * The protocol of the gateway's listener.
+   *
+   * With HTTPS, Amazon ECS requests and manages the certificate. Changing the protocol replaces
+   * the gateway.
+   *
+   * @default GatewayProtocol.HTTPS
+   */
+  readonly protocol?: GatewayProtocol;
+
+  /**
+   * The security group that controls inbound traffic to the gateway's load balancer.
+   *
+   * Amazon ECS manages the security group that lets the gateway reach the tasks of connected
+   * services.
+   *
+   * @default - a security group that Amazon ECS creates and manages
+   */
+  readonly securityGroup?: ec2.ISecurityGroupRef;
+
+  /**
+   * The maximum number of Application Load Balancers that Amazon ECS creates for the gateway.
+   * At least 1.
+   *
+   * @default 10
+   */
+  readonly maxAlbCount?: number;
+
+  /**
+   * How the load balancer handles requests that might pose an HTTP desync security risk.
+   *
+   * @default GatewayHttpDesyncMitigationMode.DEFENSIVE
+   */
+  readonly httpDesync?: GatewayHttpDesyncMitigationMode;
+
+  /**
+   * The AWS WAF web ACL to associate with the gateway's load balancer.
+   *
+   * @default - no web ACL
+   */
+  readonly webAcl?: wafv2.IWebACLRef;
+
+  /**
+   * Where to store the load balancer's access logs.
+   *
+   * @default - access logs are not stored
+   */
+  readonly accessLogs?: GatewayAccessLogs;
+
+  /**
+   * Whether Amazon ECS copies the gateway's tags to the resources it creates for the gateway.
+   *
+   * The default differs from the CloudFormation default (`GATEWAY`): for a gateway created by
+   * CloudFormation, the tags include the `aws:cloudformation:*` tags, which AWS Certificate Manager
+   * rejects, so the gateway can't connect services.
+   *
+   * @default GatewayPropagateTags.NONE
+   */
+  readonly propagateTags?: GatewayPropagateTags;
+
+  /**
+   * Tags to apply to the gateway.
+   *
+   * @default - no tags
+   */
+  readonly tags?: { [key: string]: string };
 
   /**
    * The name of the gateway. Unique in the account and Region.
    *
    * Up to 255 letters, numbers and hyphens. Changing the name replaces the gateway.
+   *
+   * CloudFormation requires a name, so `PhysicalName.GENERATE_IF_NEEDED` and no name both give the
+   * gateway a name generated from the construct path, which is known at synthesis time.
    *
    * @default - a name generated from the construct path
    */
@@ -331,20 +489,32 @@ export class Gateway extends Resource implements IGateway {
    */
   public readonly scheme: GatewayScheme;
 
+  /**
+   * The name generated for the gateway, if no name was given.
+   */
+  private readonly generatedGatewayName?: string;
+
   constructor(scope: Construct, id: string, props: GatewayProps) {
-    super(scope, id, { physicalName: props.gatewayName });
+    super(scope, id, { physicalName: props.gatewayName ?? PhysicalName.GENERATE_IF_NEEDED });
     // Enhanced CDK Analytics Telemetry
     addConstructMetadata(this, props);
 
-    if (props.gatewayName !== undefined && !Token.isUnresolved(props.gatewayName)
-      && !/^[a-zA-Z0-9-]{1,255}$/.test(props.gatewayName)) {
+    const isNameGenerated = props.gatewayName === undefined || isGeneratedWhenNeededMarker(props.gatewayName);
+    if (!isNameGenerated && !Token.isUnresolved(props.gatewayName)
+      && !/^[a-zA-Z0-9-]{1,255}$/.test(props.gatewayName!)) {
       throw new ValidationError(lit`InvalidGatewayName`, `gatewayName must be 1 to 255 letters, numbers and hyphens, got ${JSON.stringify(props.gatewayName)}`, this);
     }
-    this.gatewayName = props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' });
+    // CloudFormation requires a name, so a generated name is always concrete.
+    this.generatedGatewayName = isNameGenerated ? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' }) : undefined;
+    this.gatewayName = this.generatedGatewayName ?? this.physicalName;
 
-    if (props.ipAddressType !== undefined && !Token.isUnresolved(props.ipAddressType)
-      && props.ipAddressType !== elbv2.IpAddressType.IPV4 && props.ipAddressType !== elbv2.IpAddressType.DUAL_STACK) {
-      throw new ValidationError(lit`InvalidGatewayIpAddressType`, `ipAddressType must be IpAddressType.IPV4 or IpAddressType.DUAL_STACK, got ${JSON.stringify(props.ipAddressType)}`, this);
+    if (props.port !== undefined && !Token.isUnresolved(props.port)
+      && (!Number.isInteger(props.port) || props.port < 1 || props.port > 65535)) {
+      throw new ValidationError(lit`InvalidGatewayPort`, `port must be a whole number between 1 and 65535, got ${props.port}`, this);
+    }
+    if (props.maxAlbCount !== undefined && !Token.isUnresolved(props.maxAlbCount)
+      && (!Number.isInteger(props.maxAlbCount) || props.maxAlbCount < 1)) {
+      throw new ValidationError(lit`InvalidGatewayMaxAlbCount`, `maxAlbCount must be a whole number of at least 1, got ${props.maxAlbCount}`, this);
     }
 
     this.scheme = props.scheme ?? GatewayScheme.INTERNAL;
@@ -375,18 +545,40 @@ export class Gateway extends Resource implements IGateway {
       gatewayName: this.gatewayName,
       infrastructureRoleArn: this.infrastructureRole.roleRef.roleArn,
       deletionProtection: props.deletionProtection,
+      propagateTags: props.propagateTags ?? GatewayPropagateTags.NONE,
+      tags: props.tags ? Object.entries(props.tags).map(([key, value]) => ({ key, value })) : undefined,
       configuration: {
         hostSharedAlb: {
           scheme: this.scheme,
+          port: props.port,
+          protocol: props.protocol,
+          maxAlbCount: props.maxAlbCount,
+          httpDesync: props.httpDesync,
+          webAclArn: props.webAcl?.webAclRef.webAclArn,
+          accessLogs: props.accessLogs ? {
+            destination: {
+              s3: {
+                bucket: props.accessLogs.bucket.bucketRef.bucketName,
+                prefix: props.accessLogs.prefix,
+              },
+            },
+          } : undefined,
           networkConfiguration: {
             subnets: subnets.subnetIds,
             ipAddressType: props.ipAddressType,
+            inboundSecurityGroup: props.securityGroup?.securityGroupRef.securityGroupId,
           },
         },
       },
     });
+    // a policy added to the role (for example its DefaultPolicy) must exist before the gateway
+    resource.node.addDependency(this.infrastructureRole);
 
     this.gatewayArn = resource.attrArn;
+  }
+
+  protected generatePhysicalName(): string {
+    return this.generatedGatewayName ?? super.generatePhysicalName();
   }
 
   public get gatewayRef(): GatewayReference {
