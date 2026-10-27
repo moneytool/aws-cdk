@@ -1,6 +1,10 @@
 {
   "/GatewayTest/DefaultTest/DeployAssert": [
     {
+      "type": "aws:cdk:warning",
+      "data": "No cross-stack-reference strength configured, defaulting to \"strong\". We recommend you set feature flag \"@aws-cdk/core:defaultCrossStackReferences\" to \"both\", then deploy everywhere, then set it to \"weak\". Alternatively, set it to \"strong\" explicitly to lock in the current producer-protecting behavior. (See: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/README.md#reference-strength) [ack: @aws-cdk/core:crossStackReferencesDefaultStrong]"
+    },
+    {
       "type": "aws:cdk:templateFile",
       "data": "GatewayTestDefaultTestDeployAssert3680A625.template.json"
     }
@@ -15,6 +19,64 @@
     {
       "type": "aws:cdk:logicalId",
       "data": "CheckBootstrapVersion"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/AwsApiCallECSdescribeServices9820d0d583e2951ba5c0648ef08bc95f/Default": [
+    {
+      "type": "aws:cdk:analytics:construct",
+      "data": "*"
+    },
+    {
+      "type": "aws:cdk:analytics:method",
+      "data": "*"
+    },
+    {
+      "type": "aws:cdk:analytics:method",
+      "data": "*"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/SingletonFunction1488541a7b23466481b69b4408076b81/Role": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SingletonFunction1488541a7b23466481b69b4408076b81Role37ABCE73"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/SingletonFunction1488541a7b23466481b69b4408076b81/Handler": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SingletonFunction1488541a7b23466481b69b4408076b81HandlerCD40AE9F"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d/Default": [
+    {
+      "type": "aws:cdk:analytics:construct",
+      "data": "*"
+    },
+    {
+      "type": "aws:cdk:analytics:method",
+      "data": "*"
+    },
+    {
+      "type": "aws:cdk:analytics:method",
+      "data": "*"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d/AssertionResults": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AssertionResultsAwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/AwsApiCallECSdescribeServices9820d0d583e2951ba5c0648ef08bc95f/Default/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AwsApiCallECSdescribeServices9820d0d583e2951ba5c0648ef08bc95f"
+    }
+  ],
+  "/GatewayTest/DefaultTest/DeployAssert/AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d/Default/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d"
     }
   ]
 }

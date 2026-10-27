@@ -40,7 +40,7 @@
     },
     {
       "type": "aws:cdk:warning",
-      "data": "This gateway is internet-facing: services with a gateway connector for PUBLIC gateways can be reached from the internet. [ack: @aws-cdk/aws-ecs:gatewayInternetFacing]"
+      "data": "This gateway is internet-facing: services in its clusters with a gateway connector that does not limit accessTypes to PRIVATE can be reached from the internet. [ack: @aws-cdk/aws-ecs:gatewayInternetFacing]"
     }
   ],
   "/aws-ecs-gateway/TaskDef": [
@@ -287,6 +287,18 @@
       "data": {
         "vpc": "*"
       }
+    }
+  ],
+  "/aws-ecs-gateway/Exports/Output{\"Ref\":\"ClusterEB0386A7\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefClusterEB0386A796A0E3FE"
+    }
+  ],
+  "/aws-ecs-gateway/Exports/Output{\"Fn::GetAtt\":[\"ServiceD69D759B\",\"Name\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttServiceD69D759BName51127533"
     }
   ],
   "/aws-ecs-gateway/Vpc/PublicSubnet1/Subnet": [

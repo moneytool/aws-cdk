@@ -379,13 +379,6 @@
      "Statement": [
       {
        "Action": "sts:AssumeRole",
-       "Condition": {
-        "StringEquals": {
-         "aws:SourceAccount": {
-          "Ref": "AWS::AccountId"
-         }
-        }
-       },
        "Effect": "Allow",
        "Principal": {
         "Service": "ecs.amazonaws.com"
@@ -403,7 +396,7 @@
         {
          "Ref": "AWS::Partition"
         },
-        ":iam::aws:policy/service-role/AmazonECSInfrastructureRoleForGatewayHostSharedALB"
+        ":iam::aws:policy/AmazonECSInfrastructureRoleForGatewayHostSharedALB"
        ]
       ]
      }
@@ -436,10 +429,7 @@
       "Arn"
      ]
     }
-   },
-   "DependsOn": [
-    "GatewayInfrastructureRole7EEF07D2"
-   ]
+   }
   },
   "TaskDefTaskRole1EDB4A67": {
    "Type": "AWS::IAM::Role",
@@ -464,7 +454,7 @@
     "ContainerDefinitions": [
      {
       "Essential": true,
-      "Image": "public.ecr.aws/nginx/nginx:latest",
+      "Image": "public.ecr.aws/nginx/nginx:1.27",
       "Name": "web",
       "PortMappings": [
        {
@@ -564,6 +554,27 @@
     "ClusterGatewayAssociationawsecsgatewayGatewayFD714A37C90D4B49",
     "TaskDefTaskRole1EDB4A67"
    ]
+  }
+ },
+ "Outputs": {
+  "ExportsOutputRefClusterEB0386A796A0E3FE": {
+   "Value": {
+    "Ref": "ClusterEB0386A7"
+   },
+   "Export": {
+    "Name": "aws-ecs-gateway:ExportsOutputRefClusterEB0386A796A0E3FE"
+   }
+  },
+  "ExportsOutputFnGetAttServiceD69D759BName51127533": {
+   "Value": {
+    "Fn::GetAtt": [
+     "ServiceD69D759B",
+     "Name"
+    ]
+   },
+   "Export": {
+    "Name": "aws-ecs-gateway:ExportsOutputFnGetAttServiceD69D759BName51127533"
+   }
   }
  },
  "Parameters": {

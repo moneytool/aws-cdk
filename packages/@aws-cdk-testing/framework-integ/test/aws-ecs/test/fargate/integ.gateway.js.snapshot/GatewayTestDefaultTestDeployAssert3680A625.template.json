@@ -1,4 +1,171 @@
 {
+ "Resources": {
+  "AwsApiCallECSdescribeServices9820d0d583e2951ba5c0648ef08bc95f": {
+   "Type": "Custom::DeployAssert@SdkCallECSdescribeServices",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "SingletonFunction1488541a7b23466481b69b4408076b81HandlerCD40AE9F",
+      "Arn"
+     ]
+    },
+    "service": "ECS",
+    "api": "describeServices",
+    "parameters": {
+     "cluster": {
+      "Fn::Join": [
+       "",
+       [
+        "\"",
+        {
+         "Fn::ImportValue": "aws-ecs-gateway:ExportsOutputRefClusterEB0386A796A0E3FE"
+        },
+        "\""
+       ]
+      ]
+     },
+     "services": {
+      "Fn::Join": [
+       "",
+       [
+        "[\"",
+        {
+         "Fn::ImportValue": "aws-ecs-gateway:ExportsOutputFnGetAttServiceD69D759BName51127533"
+        },
+        "\"]"
+       ]
+      ]
+     }
+    },
+    "flattenResponse": "true",
+    "outputPaths": [
+     "services.0.currentServiceRevisions.0.arn"
+    ],
+    "salt": "1793116473835"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete"
+  },
+  "SingletonFunction1488541a7b23466481b69b4408076b81Role37ABCE73": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Version": "2012-10-17",
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ]
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+     }
+    ],
+    "Policies": [
+     {
+      "PolicyName": "Inline",
+      "PolicyDocument": {
+       "Version": "2012-10-17",
+       "Statement": [
+        {
+         "Action": [
+          "ecs:DescribeServices"
+         ],
+         "Effect": "Allow",
+         "Resource": [
+          "*"
+         ]
+        },
+        {
+         "Action": [
+          "ecs:DescribeServiceRevisions"
+         ],
+         "Effect": "Allow",
+         "Resource": [
+          "*"
+         ]
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "SingletonFunction1488541a7b23466481b69b4408076b81HandlerCD40AE9F": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Runtime": "nodejs24.x",
+    "Code": {
+     "S3Bucket": {
+      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+     },
+     "S3Key": "3ba31fe8a087145bde36be062d01d74dbc69394a8bec0d3b66c4dca974e6a6e0.zip"
+    },
+    "Timeout": 120,
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "SingletonFunction1488541a7b23466481b69b4408076b81Role37ABCE73",
+      "Arn"
+     ]
+    },
+    "LoggingConfig": {
+     "LogFormat": "JSON",
+     "ApplicationLogLevel": "FATAL"
+    }
+   }
+  },
+  "AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d": {
+   "Type": "Custom::DeployAssert@SdkCallECSdescribeServiceRevisions",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "SingletonFunction1488541a7b23466481b69b4408076b81HandlerCD40AE9F",
+      "Arn"
+     ]
+    },
+    "service": "ECS",
+    "api": "describeServiceRevisions",
+    "expected": "{\"$ObjectLike\":{\"serviceRevisions\":[{\"gatewayConnectors\":[{\"portName\":\"web\"}]}]}}",
+    "parameters": {
+     "serviceRevisionArns": {
+      "Fn::Join": [
+       "",
+       [
+        "[\"",
+        {
+         "Fn::GetAtt": [
+          "AwsApiCallECSdescribeServices9820d0d583e2951ba5c0648ef08bc95f",
+          "apiCallResponse.services.0.currentServiceRevisions.0.arn"
+         ]
+        },
+        "\"]"
+       ]
+      ]
+     }
+    },
+    "flattenResponse": "false",
+    "salt": "1793116473837"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete"
+  }
+ },
+ "Outputs": {
+  "AssertionResultsAwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d": {
+   "Value": {
+    "Fn::GetAtt": [
+     "AwsApiCallECSdescribeServiceRevisions52457b465b2bcc2fb1a452cc4783ec7d",
+     "assertion"
+    ]
+   }
+  }
+ },
  "Parameters": {
   "BootstrapVersion": {
    "Type": "AWS::SSM::Parameter::Value<String>",
