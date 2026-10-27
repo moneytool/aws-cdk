@@ -2,10 +2,10 @@ import type { Construct } from 'constructs';
 import type { IGatewayRef, GatewayReference } from './ecs.generated';
 import { CfnGateway } from './ecs.generated';
 import * as ec2 from '../../aws-ec2';
+import type * as elbv2 from '../../aws-elasticloadbalancingv2';
 import * as iam from '../../aws-iam';
 import type { Duration, IResource } from '../../core';
-import { Annotations, Names, Resource, Stack, Token, ValidationError } from '../../core';
-import { memoizedGetter } from '../../core/lib/helpers-internal';
+import { Annotations, Arn, ArnFormat, Fn, Names, Resource, Token, ValidationError } from '../../core';
 import { addConstructMetadata } from '../../core/lib/metadata-resource';
 import { lit } from '../../core/lib/private/literal-string';
 import { propertyInjectable } from '../../core/lib/prop-injectable';
@@ -30,7 +30,7 @@ export enum GatewayScheme {
  *
  * A gateway with an internet-facing scheme has the `PUBLIC` access type, and an internal one has
  * the `PRIVATE` access type. A service's gateway connector can be limited to gateways of an
- * access type.
+ * access type; without a limit, gateways of both access types are eligible.
  */
 export enum GatewayAccessType {
   /**
@@ -61,45 +61,51 @@ export enum GatewayHealthCheckProtocol {
 
 /**
  * The health check a gateway runs against the tasks of a service.
+ *
+ * Changing the health check of a service that is already connected replaces its target group,
+ * which fails for services with the `ROLLING` deployment strategy. Set the health check when the
+ * service is first connected, or use the `BLUE_GREEN` or `CANARY` deployment strategy.
  */
 export interface GatewayConnectorHealthCheck {
   /**
-   * The path the gateway sends health check requests to.
+   * The path the gateway sends health check requests to. Must start with `/`.
    *
-   * @default - the Amazon ECS default
+   * @default '/'
    */
   readonly path?: string;
 
   /**
    * The port the gateway sends health check requests to.
    *
-   * @default - the port of the connector's port mapping
+   * @default - the port of the connector's named port mapping
    */
   readonly port?: number;
 
   /**
    * The protocol of the health check requests.
    *
-   * @default - the Amazon ECS default
+   * @default GatewayHealthCheckProtocol.HTTP
    */
   readonly protocol?: GatewayHealthCheckProtocol;
 
   /**
-   * The time between health checks of a task.
+   * The time between health checks of a task. Between 5 and 300 seconds.
    *
-   * @default - the Amazon ECS default
+   * @default Duration.seconds(30)
    */
   readonly interval?: Duration;
 
   /**
-   * The time after which a health check without a response fails.
+   * The time after which a health check without a response fails. Between 2 and 120 seconds,
+   * and less than `interval`.
    *
-   * @default - the Amazon ECS default
+   * @default Duration.seconds(5)
    */
   readonly timeout?: Duration;
 
   /**
    * The number of consecutive successful health checks before a task is considered healthy.
+   * Between 2 and 10.
    *
    * @default - the Amazon ECS default
    */
@@ -107,6 +113,7 @@ export interface GatewayConnectorHealthCheck {
 
   /**
    * The number of consecutive failed health checks before a task is considered unhealthy.
+   * Between 2 and 10.
    *
    * @default - the Amazon ECS default
    */
@@ -115,20 +122,27 @@ export interface GatewayConnectorHealthCheck {
   /**
    * The HTTP codes of a successful health check, for example `200` or `200-299`.
    *
-   * @default - the Amazon ECS default
+   * Can't be combined with `healthyGrpcCodes`.
+   *
+   * @default '200'
    */
   readonly healthyHttpCodes?: string;
 
   /**
    * The gRPC codes of a successful health check, for example `0` or `0-99`.
    *
-   * @default - the Amazon ECS default
+   * Can't be combined with `healthyHttpCodes`.
+   *
+   * @default - HTTP codes are used
    */
   readonly healthyGrpcCodes?: string;
 }
 
 /**
  * How a service receives traffic through the gateways associated with its cluster.
+ *
+ * The task definition must use the `awsvpc` network mode, and a service can have one gateway
+ * connector.
  */
 export interface GatewayConnectorOptions {
   /**
@@ -139,6 +153,10 @@ export interface GatewayConnectorOptions {
   /**
    * The access types of the gateways the service receives traffic from.
    *
+   * Without this, the service is also reachable through internet-facing (`PUBLIC`) gateways
+   * associated with the cluster. Use `[GatewayAccessType.PRIVATE]` for a service that must not
+   * be reachable from the internet.
+   *
    * @default - gateways of both access types
    */
   readonly accessTypes?: GatewayAccessType[];
@@ -146,7 +164,11 @@ export interface GatewayConnectorOptions {
   /**
    * The health check the gateway runs against the service's tasks.
    *
-   * @default - the Amazon ECS default health check
+   * Changing the health check of a connected service fails for services with the `ROLLING`
+   * deployment strategy; see `GatewayConnectorHealthCheck`.
+   *
+   * @default - HTTP on path `/` of the named port, every 30 seconds with a 5 second timeout,
+   * healthy on HTTP code 200
    */
   readonly healthCheck?: GatewayConnectorHealthCheck;
 }
@@ -161,6 +183,13 @@ export interface IGateway extends IResource, IGatewayRef {
    * @attribute
    */
   readonly gatewayArn: string;
+
+  /**
+   * The name of the gateway.
+   *
+   * @attribute
+   */
+  readonly gatewayName: string;
 }
 
 /**
@@ -168,14 +197,19 @@ export interface IGateway extends IResource, IGatewayRef {
  */
 export interface GatewayProps {
   /**
-   * The VPC to place the gateway's load balancer in.
+   * The VPC to place the gateway's load balancer in. Services that use the gateway must run in
+   * the same VPC.
    *
    * [disable-awslint:prefer-ref-interface] the subnets are selected from the VPC
    */
   readonly vpc: ec2.IVpc;
 
   /**
-   * The subnets to place the gateway's load balancer in. At least two subnets are required.
+   * The subnets to place the gateway's load balancer in.
+   *
+   * At least two subnets in different Availability Zones are required, and the gateway must
+   * cover every Availability Zone the services that use it run in. Changing the subnets replaces
+   * the gateway.
    *
    * @default - the VPC's public subnets for an internet-facing gateway, and its private subnets
    * for an internal gateway
@@ -185,14 +219,25 @@ export interface GatewayProps {
   /**
    * Whether the gateway's load balancer is reachable from the internet.
    *
+   * Changing the scheme replaces the gateway.
+   *
    * @default GatewayScheme.INTERNAL
    */
   readonly scheme?: GatewayScheme;
 
   /**
-   * The name of the gateway.
+   * The IP address type of the gateway's load balancer.
    *
-   * Up to 255 letters, numbers and hyphens.
+   * Changing the IP address type replaces the gateway.
+   *
+   * @default - IPv4 (the Amazon ECS default)
+   */
+  readonly ipAddressType?: elbv2.IpAddressType;
+
+  /**
+   * The name of the gateway. Unique in the account and Region.
+   *
+   * Up to 255 letters, numbers and hyphens. Changing the name replaces the gateway.
    *
    * @default - a name generated from the construct path
    */
@@ -209,7 +254,8 @@ export interface GatewayProps {
   /**
    * Whether the gateway is protected from deletion.
    *
-   * While deletion protection is on, deleting the gateway, including through a stack delete, fails.
+   * While deletion protection is on, deleting or replacing the gateway, including through a stack
+   * delete or a change to a property that replaces the gateway, fails.
    *
    * @default true
    */
@@ -234,10 +280,24 @@ export class Gateway extends Resource implements IGateway {
 
   /**
    * Import an existing gateway from its ARN.
+   *
+   * The ARN has the form `arn:<partition>:ecs:<region>:<account>:gateway/<name>/<id>`.
    */
   public static fromGatewayArn(scope: Construct, id: string, gatewayArn: string): IGateway {
+    const arn = Arn.split(gatewayArn, ArnFormat.SLASH_RESOURCE_NAME);
+    let gatewayName: string;
+    if (Token.isUnresolved(gatewayArn)) {
+      gatewayName = Fn.select(0, Fn.split('/', arn.resourceName!));
+    } else {
+      if (arn.service !== 'ecs' || arn.resource !== 'gateway' || !arn.resourceName) {
+        throw new ValidationError(lit`InvalidGatewayArn`, `gatewayArn must be an ARN of the form arn:<partition>:ecs:<region>:<account>:gateway/<name>/<id>, got ${JSON.stringify(gatewayArn)}`, scope);
+      }
+      gatewayName = arn.resourceName.split('/')[0];
+    }
+
     class Import extends Resource implements IGateway {
       public readonly gatewayArn = gatewayArn;
+      public readonly gatewayName = gatewayName;
 
       public get gatewayRef(): GatewayReference {
         return { gatewayArn: this.gatewayArn };
@@ -245,6 +305,20 @@ export class Gateway extends Resource implements IGateway {
     }
     return new Import(scope, id, { environmentFromArn: gatewayArn });
   }
+
+  /**
+   * The ARN of the gateway.
+   *
+   * @attribute
+   */
+  public readonly gatewayArn: string;
+
+  /**
+   * The name of the gateway.
+   *
+   * @attribute
+   */
+  public readonly gatewayName: string;
 
   /**
    * The IAM role that Amazon ECS uses to manage the gateway's infrastructure.
@@ -256,8 +330,6 @@ export class Gateway extends Resource implements IGateway {
    */
   public readonly scheme: GatewayScheme;
 
-  private readonly resource: CfnGateway;
-
   constructor(scope: Construct, id: string, props: GatewayProps) {
     super(scope, id, { physicalName: props.gatewayName });
     // Enhanced CDK Analytics Telemetry
@@ -267,33 +339,34 @@ export class Gateway extends Resource implements IGateway {
       && !/^[a-zA-Z0-9-]{1,255}$/.test(props.gatewayName)) {
       throw new ValidationError(lit`InvalidGatewayName`, `gatewayName must be 1 to 255 letters, numbers and hyphens, got ${JSON.stringify(props.gatewayName)}`, this);
     }
+    this.gatewayName = props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' });
 
     this.scheme = props.scheme ?? GatewayScheme.INTERNAL;
     if (this.scheme === GatewayScheme.INTERNET_FACING) {
       Annotations.of(this).addWarningV2('@aws-cdk/aws-ecs:gatewayInternetFacing',
-        'This gateway is internet-facing: services with a gateway connector for PUBLIC gateways can be reached from the internet.');
+        'This gateway is internet-facing: services in its clusters with a gateway connector that does not limit accessTypes to PRIVATE can be reached from the internet.');
     }
 
     const subnets = props.vpc.selectSubnets(props.vpcSubnets ?? {
       subnetType: this.scheme === GatewayScheme.INTERNET_FACING ? ec2.SubnetType.PUBLIC : ec2.SubnetType.PRIVATE_WITH_EGRESS,
     });
     if (!Token.isUnresolved(subnets.subnetIds) && subnets.subnetIds.length < 2) {
-      throw new ValidationError(lit`GatewayNeedsTwoSubnets`, `a gateway needs at least 2 subnets, got ${subnets.subnetIds.length}`, this);
+      throw new ValidationError(lit`GatewayNeedsTwoSubnets`, `a gateway needs at least 2 subnets in different Availability Zones, got ${subnets.subnetIds.length} subnet(s)`, this);
+    }
+    const azs = subnets.availabilityZones;
+    if (azs.length === subnets.subnetIds.length && azs.every(az => az && !Token.isUnresolved(az)) && new Set(azs).size < 2) {
+      throw new ValidationError(lit`GatewayNeedsTwoAzs`, `a gateway needs subnets in at least 2 different Availability Zones, got ${JSON.stringify([...new Set(azs)])}`, this);
     }
 
     this.infrastructureRole = props.infrastructureRole ?? new iam.Role(this, 'InfrastructureRole', {
-      assumedBy: new iam.ServicePrincipal('ecs.amazonaws.com', {
-        conditions: {
-          StringEquals: { 'aws:SourceAccount': Stack.of(this).account },
-        },
-      }),
+      assumedBy: new iam.ServicePrincipal('ecs.amazonaws.com'),
       managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSInfrastructureRoleForGatewayHostSharedALB'),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonECSInfrastructureRoleForGatewayHostSharedALB'),
       ],
     });
 
-    const resource = this.resource = new CfnGateway(this, 'Resource', {
-      gatewayName: props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' }),
+    const resource = new CfnGateway(this, 'Resource', {
+      gatewayName: this.gatewayName,
       infrastructureRoleArn: this.infrastructureRole.roleRef.roleArn,
       deletionProtection: props.deletionProtection,
       configuration: {
@@ -301,26 +374,13 @@ export class Gateway extends Resource implements IGateway {
           scheme: this.scheme,
           networkConfiguration: {
             subnets: subnets.subnetIds,
+            ipAddressType: props.ipAddressType,
           },
         },
       },
     });
-    // the infrastructure role must be able to manage the load balancer before the gateway is created
-    resource.node.addDependency(this.infrastructureRole);
-  }
 
-  /**
-   * The ARN of the gateway.
-   *
-   * @attribute
-   */
-  @memoizedGetter
-  public get gatewayArn(): string {
-    return this.getResourceArnAttribute(this.resource.attrArn, {
-      service: 'ecs',
-      resource: 'gateway',
-      resourceName: this.physicalName,
-    });
+    this.gatewayArn = resource.attrArn;
   }
 
   public get gatewayRef(): GatewayReference {

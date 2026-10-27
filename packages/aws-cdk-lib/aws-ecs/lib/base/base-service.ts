@@ -1513,25 +1513,50 @@ export abstract class BaseService extends Resource
    * @param port: The port number
    * @returns boolean whether the port is valid
    */
+  private isValidPort(port?: number): boolean {
+    return !!(port && Number.isInteger(port) && port >= BaseService.MIN_PORT && port <= BaseService.MAX_PORT);
+  }
+
   private validateGatewayConnector(connector: GatewayConnectorOptions) {
-    const port = connector.healthCheck?.port;
-    if (port !== undefined && !Token.isUnresolved(port) && !this.isValidPort(port)) {
-      throw new ValidationError(lit`GatewayHealthCheckPortValid`, `gatewayConnector health check port must be between 1 and 65535, got ${port}`, this);
+    if (this.taskDefinition.networkMode !== NetworkMode.AWS_VPC) {
+      throw new ValidationError(lit`GatewayConnectorRequiresAwsVpc`, `gatewayConnector requires a task definition with the awsvpc network mode, got ${JSON.stringify(this.taskDefinition.networkMode)}`, this);
     }
+
     const accessTypes = connector.accessTypes;
-    if (accessTypes !== undefined && (accessTypes.length === 0 || new Set(accessTypes).size !== accessTypes.length)) {
+    if (accessTypes !== undefined && !Token.isUnresolved(accessTypes)
+      && (accessTypes.length === 0 || new Set(accessTypes).size !== accessTypes.length)) {
       throw new ValidationError(lit`GatewayAccessTypesValid`, `gatewayConnector accessTypes must be a non-empty list without duplicates, got ${JSON.stringify(accessTypes)}`, this);
     }
+
+    const hc = connector.healthCheck;
+    if (hc) {
+      if (hc.port !== undefined && !Token.isUnresolved(hc.port) && !this.isValidPort(hc.port)) {
+        throw new ValidationError(lit`GatewayHealthCheckPortValid`, `gatewayConnector health check port must be between 1 and 65535, got ${hc.port}`, this);
+      }
+      if (hc.path !== undefined && !Token.isUnresolved(hc.path) && !hc.path.startsWith('/')) {
+        throw new ValidationError(lit`GatewayHealthCheckPathValid`, `gatewayConnector health check path must start with '/', got ${JSON.stringify(hc.path)}`, this);
+      }
+      const interval = gatewayHealthCheckSeconds(this, 'interval', hc.interval, 5, 300);
+      const timeout = gatewayHealthCheckSeconds(this, 'timeout', hc.timeout, 2, 120);
+      if (interval !== undefined && timeout !== undefined && timeout >= interval) {
+        throw new ValidationError(lit`GatewayHealthCheckTimeoutValid`, `gatewayConnector health check timeout must be less than the interval, got timeout ${timeout} seconds and interval ${interval} seconds`, this);
+      }
+      for (const [name, count] of [['healthyThresholdCount', hc.healthyThresholdCount], ['unhealthyThresholdCount', hc.unhealthyThresholdCount]] as const) {
+        if (count !== undefined && !Token.isUnresolved(count) && (!Number.isInteger(count) || count < 2 || count > 10)) {
+          throw new ValidationError(lit`GatewayHealthCheckThresholdValid`, `gatewayConnector health check ${name} must be a whole number between 2 and 10, got ${count}`, this);
+        }
+      }
+      if (hc.healthyHttpCodes !== undefined && hc.healthyGrpcCodes !== undefined) {
+        throw new ValidationError(lit`GatewayHealthCheckMatcherValid`, 'gatewayConnector health check can have healthyHttpCodes or healthyGrpcCodes, not both', this);
+      }
+    }
+
     // containers can be added to the task definition after the service is created
     this.node.addValidation({
       validate: () => Token.isUnresolved(connector.portName) || this.taskDefinition.findPortMappingByName(connector.portName)
         ? []
         : [`gatewayConnector portName ${JSON.stringify(connector.portName)} does not match the name of a port mapping in the task definition`],
     });
-  }
-
-  private isValidPort(port?: number): boolean {
-    return !!(port && Number.isInteger(port) && port >= BaseService.MIN_PORT && port <= BaseService.MAX_PORT);
   }
 
   /**
@@ -2300,6 +2325,20 @@ function determineContainerNameAndPort(scope: IConstruct, options: DetermineCont
   return {};
 }
 
+/**
+ * Validate a gateway health check duration and return it in seconds, or undefined if it is a token or not set.
+ */
+function gatewayHealthCheckSeconds(scope: Construct, name: string, duration: Duration | undefined, min: number, max: number): number | undefined {
+  if (duration === undefined || duration.isUnresolved()) {
+    return undefined;
+  }
+  const seconds = duration.toSeconds({ integral: false });
+  if (!Number.isInteger(seconds) || seconds < min || seconds > max) {
+    throw new ValidationError(lit`GatewayHealthCheckDurationValid`, `gatewayConnector health check ${name} must be a whole number of seconds between ${min} and ${max}, got ${seconds} seconds`, scope);
+  }
+  return seconds;
+}
+
 function renderGatewayConnector(connector: GatewayConnectorOptions): CfnService.GatewayConnectorProperty {
   const hc = connector.healthCheck;
   return {
@@ -2309,8 +2348,8 @@ function renderGatewayConnector(connector: GatewayConnectorOptions): CfnService.
       healthCheckPath: hc.path,
       healthCheckPort: hc.port,
       healthCheckProtocol: hc.protocol,
-      healthCheckIntervalSeconds: hc.interval?.toSeconds(),
-      healthCheckTimeoutSeconds: hc.timeout?.toSeconds(),
+      healthCheckIntervalSeconds: hc.interval?.toSeconds({ integral: false }),
+      healthCheckTimeoutSeconds: hc.timeout?.toSeconds({ integral: false }),
       healthyThresholdCount: hc.healthyThresholdCount,
       unhealthyThresholdCount: hc.unhealthyThresholdCount,
       matcher: hc.healthyHttpCodes !== undefined || hc.healthyGrpcCodes !== undefined

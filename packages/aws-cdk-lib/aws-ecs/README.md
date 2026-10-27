@@ -2247,7 +2247,6 @@ gateway connector that names the port mapping the gateway sends traffic to.
 ```ts
 declare const vpc: ec2.Vpc;
 declare const cluster: ecs.Cluster;
-declare const taskDefinition: ecs.TaskDefinition;
 
 const gateway = new ecs.Gateway(this, 'Gateway', {
   vpc,
@@ -2255,8 +2254,9 @@ const gateway = new ecs.Gateway(this, 'Gateway', {
 });
 cluster.associateGateway(gateway);
 
+const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef');
 taskDefinition.addContainer('web', {
-  image: ecs.ContainerImage.fromRegistry('public.ecr.aws/nginx/nginx:latest'),
+  image: ecs.ContainerImage.fromRegistry('public.ecr.aws/nginx/nginx:1.27'),
   portMappings: [{ containerPort: 80, name: 'web' }],
 });
 
@@ -2272,19 +2272,61 @@ new ecs.FargateService(this, 'Service', {
 ```
 
 A gateway is internal by default and is placed in the VPC's private subnets; an internet-facing
-gateway is placed in the public subnets. Use `vpcSubnets` to choose other subnets (at least two).
+gateway is placed in the public subnets. Use `vpcSubnets` to choose other subnets, in at least two
+Availability Zones, and `ipAddressType` for a dual-stack load balancer.
 
 By default, the gateway gets a new IAM role that Amazon ECS assumes to manage the load balancer,
 with the `AmazonECSInfrastructureRoleForGatewayHostSharedALB` managed policy. Pass
 `infrastructureRole` to use your own role.
 
-Gateways have deletion protection on by default, so deleting the stack fails while the gateway
-exists. Set `deletionProtection: false` for gateways that you want to delete with the stack.
+Requirements and limits:
+
+- The task definition must use the `awsvpc` network mode and have a named container port mapping,
+  and a service can have one gateway connector.
+- The gateway must be in the same VPC as the services, and its subnets must cover every
+  Availability Zone the services run in.
+- Amazon ECS evaluates up to 5 gateways per cluster.
+- The gateway's name, scheme, subnets and IP address type can't be changed: changing them replaces
+  the gateway.
+- Gateways have deletion protection on by default, so deleting the stack, or replacing the
+  gateway, fails while the gateway exists. Set `deletionProtection: false` for gateways that you
+  want to delete or replace with the stack.
+
+Without `accessTypes`, a service is eligible for both internal and internet-facing gateways
+associated with its cluster. For a service that must not be reachable from the internet, set
+`accessTypes: [ecs.GatewayAccessType.PRIVATE]`.
+
+The health check defaults to HTTP on path `/` of the named port, every 30 seconds with a 5 second
+timeout, healthy on HTTP code 200. Changing the health check of a connected service replaces its
+target group, which fails for services with the `ROLLING` deployment strategy: set the health
+check when you first connect the service, or use the `BLUE_GREEN` or `CANARY` deployment strategy.
 
 A gateway connector can only be added to a service once the cluster's gateway association is
 active. Services in a cluster created in the same app depend on the cluster's gateway
-associations automatically. For an imported cluster, associate the gateway before deploying the
-service.
+associations automatically. For an imported cluster, create the association yourself and add the
+dependency:
+
+```ts
+declare const vpc: ec2.IVpc;
+declare const gateway: ecs.Gateway;
+declare const taskDefinition: ecs.FargateTaskDefinition;
+
+const cluster = ecs.Cluster.fromClusterAttributes(this, 'Cluster', {
+  clusterName: 'my-cluster',
+  vpc,
+});
+const association = new ecs.CfnGatewayClusterAssociations(this, 'Association', {
+  cluster: cluster.clusterName,
+  gateway: gateway.gatewayArn,
+});
+
+const service = new ecs.FargateService(this, 'Service', {
+  cluster,
+  taskDefinition,
+  gatewayConnector: { portName: 'web' },
+});
+service.node.addDependency(association);
+```
 
 To use a gateway that already exists, import it with `ecs.Gateway.fromGatewayArn()`.
 

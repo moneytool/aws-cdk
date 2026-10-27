@@ -18,11 +18,11 @@ cluster.associateGateway(gateway);
 
 const taskDefinition = new ecs.FargateTaskDefinition(stack, 'TaskDef');
 taskDefinition.addContainer('web', {
-  image: ecs.ContainerImage.fromRegistry('public.ecr.aws/nginx/nginx:latest'),
+  image: ecs.ContainerImage.fromRegistry('public.ecr.aws/nginx/nginx:1.27'),
   portMappings: [{ containerPort: 80, name: 'web' }],
 });
 
-new ecs.FargateService(stack, 'Service', {
+const service = new ecs.FargateService(stack, 'Service', {
   cluster,
   taskDefinition,
   minHealthyPercent: 100,
@@ -33,7 +33,20 @@ new ecs.FargateService(stack, 'Service', {
   },
 });
 
-new integ.IntegTest(app, 'GatewayTest', {
+const test = new integ.IntegTest(app, 'GatewayTest', {
   testCases: [stack],
 });
+
+// DescribeServices doesn't return gateway connectors; they are in the service revision.
+const services = test.assertions.awsApiCall('ECS', 'describeServices', {
+  cluster: cluster.clusterName,
+  services: [service.serviceName],
+});
+test.assertions.awsApiCall('ECS', 'describeServiceRevisions', {
+  serviceRevisionArns: [services.getAttString('services.0.currentServiceRevisions.0.arn')],
+}).expect(integ.ExpectedResult.objectLike({
+  serviceRevisions: [{
+    gatewayConnectors: [{ portName: 'web' }],
+  }],
+}));
 
