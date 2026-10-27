@@ -428,8 +428,12 @@
       "GatewayInfrastructureRole7EEF07D2",
       "Arn"
      ]
-    }
-   }
+    },
+    "PropagateTags": "NONE"
+   },
+   "DependsOn": [
+    "GatewayInfrastructureRole7EEF07D2"
+   ]
   },
   "TaskDefTaskRole1EDB4A67": {
    "Type": "AWS::IAM::Role",
