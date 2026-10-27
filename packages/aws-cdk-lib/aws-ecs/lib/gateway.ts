@@ -5,6 +5,7 @@ import * as ec2 from '../../aws-ec2';
 import * as iam from '../../aws-iam';
 import type { Duration, IResource } from '../../core';
 import { Annotations, Names, Resource, Stack, Token, ValidationError } from '../../core';
+import { memoizedGetter } from '../../core/lib/helpers-internal';
 import { addConstructMetadata } from '../../core/lib/metadata-resource';
 import { lit } from '../../core/lib/private/literal-string';
 import { propertyInjectable } from '../../core/lib/prop-injectable';
@@ -244,13 +245,6 @@ export class Gateway extends Resource implements IGateway {
   }
 
   /**
-   * The ARN of the gateway.
-   *
-   * @attribute
-   */
-  public readonly gatewayArn: string;
-
-  /**
    * The IAM role that Amazon ECS uses to manage the gateway's infrastructure.
    */
   public readonly infrastructureRole: iam.IRole;
@@ -259,6 +253,8 @@ export class Gateway extends Resource implements IGateway {
    * Whether the gateway's load balancer is reachable from the internet.
    */
   public readonly scheme: GatewayScheme;
+
+  private readonly resource: CfnGateway;
 
   constructor(scope: Construct, id: string, props: GatewayProps) {
     super(scope, id, { physicalName: props.gatewayName });
@@ -294,7 +290,7 @@ export class Gateway extends Resource implements IGateway {
       ],
     });
 
-    const resource = new CfnGateway(this, 'Resource', {
+    const resource = this.resource = new CfnGateway(this, 'Resource', {
       gatewayName: props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' }),
       infrastructureRoleArn: this.infrastructureRole.roleArn,
       deletionProtection: props.deletionProtection,
@@ -309,8 +305,16 @@ export class Gateway extends Resource implements IGateway {
     });
     // the infrastructure role must be able to manage the load balancer before the gateway is created
     resource.node.addDependency(this.infrastructureRole);
+  }
 
-    this.gatewayArn = this.getResourceArnAttribute(resource.attrArn, {
+  /**
+   * The ARN of the gateway.
+   *
+   * @attribute
+   */
+  @memoizedGetter
+  public get gatewayArn(): string {
+    return this.getResourceArnAttribute(this.resource.attrArn, {
       service: 'ecs',
       resource: 'gateway',
       resourceName: this.physicalName,
