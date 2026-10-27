@@ -119,6 +119,13 @@ describe('gateway', () => {
     template.resourceCountIs('AWS::IAM::Role', 0);
   });
 
+  test('fails for an IP address type the gateway does not support', () => {
+    expect(() => new ecs.Gateway(stack, 'Gateway', {
+      vpc,
+      ipAddressType: elbv2.IpAddressType.DUAL_STACK_WITHOUT_PUBLIC_IPV4,
+    })).toThrow(/ipAddressType must be IpAddressType.IPV4 or IpAddressType.DUAL_STACK, got "dualstack-without-public-ipv4"/);
+  });
+
   test('generated name of a deeply nested gateway is at most 255 characters', () => {
     let scope: Construct = stack;
     for (let i = 0; i < 20; i++) {

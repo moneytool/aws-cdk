@@ -2,7 +2,7 @@ import type { Construct } from 'constructs';
 import type { IGatewayRef, GatewayReference } from './ecs.generated';
 import { CfnGateway } from './ecs.generated';
 import * as ec2 from '../../aws-ec2';
-import type * as elbv2 from '../../aws-elasticloadbalancingv2';
+import * as elbv2 from '../../aws-elasticloadbalancingv2';
 import * as iam from '../../aws-iam';
 import type { Duration, IResource } from '../../core';
 import { Annotations, Arn, ArnFormat, Fn, Names, Resource, Token, ValidationError } from '../../core';
@@ -228,6 +228,7 @@ export interface GatewayProps {
   /**
    * The IP address type of the gateway's load balancer.
    *
+   * Only `IpAddressType.IPV4` and `IpAddressType.DUAL_STACK` are supported.
    * Changing the IP address type replaces the gateway.
    *
    * @default - IPv4 (the Amazon ECS default)
@@ -340,6 +341,11 @@ export class Gateway extends Resource implements IGateway {
       throw new ValidationError(lit`InvalidGatewayName`, `gatewayName must be 1 to 255 letters, numbers and hyphens, got ${JSON.stringify(props.gatewayName)}`, this);
     }
     this.gatewayName = props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' });
+
+    if (props.ipAddressType !== undefined && !Token.isUnresolved(props.ipAddressType)
+      && props.ipAddressType !== elbv2.IpAddressType.IPV4 && props.ipAddressType !== elbv2.IpAddressType.DUAL_STACK) {
+      throw new ValidationError(lit`InvalidGatewayIpAddressType`, `ipAddressType must be IpAddressType.IPV4 or IpAddressType.DUAL_STACK, got ${JSON.stringify(props.ipAddressType)}`, this);
+    }
 
     this.scheme = props.scheme ?? GatewayScheme.INTERNAL;
     if (this.scheme === GatewayScheme.INTERNET_FACING) {
