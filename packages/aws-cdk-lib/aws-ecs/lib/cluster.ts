@@ -7,6 +7,7 @@ import { ECSMetrics } from './ecs-canned-metrics.generated';
 import type {
   IClusterRef,
   ClusterReference,
+  IGatewayRef,
 } from './ecs.generated';
 import {
   CfnCluster,
@@ -14,7 +15,6 @@ import {
   CfnClusterCapacityProviderAssociations,
   CfnGatewayClusterAssociations,
 } from './ecs.generated';
-import type { IGateway } from './gateway';
 import * as autoscaling from '../../aws-autoscaling';
 import * as cloudwatch from '../../aws-cloudwatch';
 import type { InstanceRequirementsConfig } from '../../aws-ec2';
@@ -833,7 +833,7 @@ export class Cluster extends Resource implements ICluster {
    * @param gateway the gateway to associate with this cluster.
    */
   @MethodMetadata()
-  public associateGateway(gateway: IGateway): void {
+  public associateGateway(gateway: IGatewayRef): void {
     const association = new CfnGatewayClusterAssociations(this, `GatewayAssociation${Names.nodeUniqueId(gateway.node)}`, {
       cluster: this.clusterName,
       gateway: gateway.gatewayRef.gatewayArn,

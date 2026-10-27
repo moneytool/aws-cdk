@@ -169,6 +169,8 @@ export interface IGateway extends IResource, IGatewayRef {
 export interface GatewayProps {
   /**
    * The VPC to place the gateway's load balancer in.
+   *
+   * [disable-awslint:prefer-ref-interface] the subnets are selected from the VPC
    */
   readonly vpc: ec2.IVpc;
 
@@ -202,7 +204,7 @@ export interface GatewayProps {
    * @default - a role that Amazon ECS can assume, with the `AmazonECSInfrastructureRoleForGatewayHostSharedALB`
    * managed policy
    */
-  readonly infrastructureRole?: iam.IRole;
+  readonly infrastructureRole?: iam.IRoleRef;
 
   /**
    * Whether the gateway is protected from deletion.
@@ -247,7 +249,7 @@ export class Gateway extends Resource implements IGateway {
   /**
    * The IAM role that Amazon ECS uses to manage the gateway's infrastructure.
    */
-  public readonly infrastructureRole: iam.IRole;
+  public readonly infrastructureRole: iam.IRoleRef;
 
   /**
    * Whether the gateway's load balancer is reachable from the internet.
@@ -292,7 +294,7 @@ export class Gateway extends Resource implements IGateway {
 
     const resource = this.resource = new CfnGateway(this, 'Resource', {
       gatewayName: props.gatewayName ?? Names.uniqueResourceName(this, { maxLength: 255, separator: '-' }),
-      infrastructureRoleArn: this.infrastructureRole.roleArn,
+      infrastructureRoleArn: this.infrastructureRole.roleRef.roleArn,
       deletionProtection: props.deletionProtection,
       configuration: {
         hostSharedAlb: {
